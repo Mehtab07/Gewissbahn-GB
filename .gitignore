@@ -147,6 +147,9 @@ activemq-data/
 # SageMath parsed files
 *.sage.py
 
+# Downloaded dataset (fetched via snapshot_download, see exploration.ipynb / download_data.py)
+data/
+
 # Environments
 .env
 .envrc
