@@ -57,8 +57,10 @@ if search:
                 st.subheader(f"{s.label}  ·  {s.departure} → {s.arrival}  ({s.duration_min} min)")
                 badge = "🟢" if s.confidence >= 0.7 else ("🟡" if s.confidence >= 0.4 else "🔴")
                 st.write(f"{badge} **{s.confidence:.0%} confidence**  ·  {s.n_transfers} transfer(s)")
+                for d in s.leg_details:
+                    st.markdown(f"🚆 {d}")
                 for d in s.transfer_details:
-                    st.markdown(f"- {d}")
+                    st.markdown(f"🔀 {d}")
                 if s.live_note:
                     if "no live confirmation" in s.live_note:
                         st.warning(s.live_note)

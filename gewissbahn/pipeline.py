@@ -56,7 +56,38 @@ def resolve_station(mapping: pd.DataFrame, query: str) -> str:
     raise ValueError(f'No station found matching "{query}"')
 
 
-def _build_summary(index: int, itinerary, score, live_legs) -> reasoning.ItinerarySummary:
+def _station_name(mapping: pd.DataFrame, eva: str | None) -> str:
+    if eva is None:
+        return "unknown station"
+    hit = mapping[mapping["eva"] == eva]
+    return hit.iloc[0]["station_name"] if not hit.empty else eva
+
+
+def _train_label(event) -> str:
+    if event is None:
+        return "train (no live match)"
+    parts = [p for p in (event.category, event.train_number) if p]
+    label = " ".join(parts) if parts else (event.line or "train")
+    if event.line and event.line not in label:
+        label += f" [{event.line}]"
+    return label
+
+
+def _leg_status(live_leg) -> str:
+    # DB's API only sends a "changed" time when a leg actually deviates from schedule, so
+    # delay_min is None both when we have no live match AND when the leg is exactly on
+    # time -- check whether we matched a live event at all to tell those apart.
+    bits = []
+    if live_leg.board_live is not None:
+        bits.append(f"dep +{live_leg.board_delay_min}min" if live_leg.board_delay_min else "dep on time")
+    if live_leg.alight_live is not None:
+        bits.append(f"arr +{live_leg.alight_delay_min}min" if live_leg.alight_delay_min else "arr on time")
+    if live_leg.is_cancelled:
+        bits.append("CANCELLED")
+    return ", ".join(bits) if bits else "no live match"
+
+
+def _build_summary(index: int, itinerary, score, live_legs, mapping: pd.DataFrame) -> reasoning.ItinerarySummary:
     has_live = any(ll.board_live or ll.alight_live for ll in live_legs)
     delays = [ll.board_delay_min for ll in live_legs if ll.board_delay_min is not None]
     if not has_live:
@@ -66,8 +97,18 @@ def _build_summary(index: int, itinerary, score, live_legs) -> reasoning.Itinera
     else:
         live_note = "live confirmed, on schedule"
 
+    leg_details = []
+    for leg, live_leg in zip(itinerary.legs, live_legs):
+        board_name = _station_name(mapping, live_leg.board_eva)
+        alight_name = _station_name(mapping, live_leg.alight_eva)
+        train = _train_label(live_leg.board_live or live_leg.alight_live)
+        leg_details.append(
+            f"{train}: {board_name} {_fmt_time(leg.board_time)} -> {alight_name} {_fmt_time(leg.alight_time)} "
+            f"({_leg_status(live_leg)})"
+        )
+
     details = [
-        f"transfer at {t.eva}: {t.success_probability:.0%} historical success (n={t.sample_size})"
+        f"transfer at {_station_name(mapping, t.eva)}: {t.success_probability:.0%} historical success (n={t.sample_size})"
         for t in score.transfers
         if t.eva
     ]
@@ -79,6 +120,7 @@ def _build_summary(index: int, itinerary, score, live_legs) -> reasoning.Itinera
         duration_min=(itinerary.arrival_time - itinerary.departure_time) // 60,
         n_transfers=itinerary.n_transfers,
         confidence=score.confidence,
+        leg_details=leg_details,
         transfer_details=details,
         live_note=live_note,
     )
@@ -132,7 +174,7 @@ def plan_journey(
     for index, itinerary in enumerate(itineraries):
         score = historical.score_itinerary(hist_con, gtfs_con, mapping, itinerary, service_date)
         live_legs = live_overlay.overlay_itinerary(gtfs_con, mapping, itinerary, service_date)
-        summaries.append(_build_summary(index, itinerary, score, live_legs))
+        summaries.append(_build_summary(index, itinerary, score, live_legs, mapping))
 
     explanation = reasoning.explain(summaries, origin=origin, destination=destination)
     return PlanResult(summaries=summaries, explanation=explanation)

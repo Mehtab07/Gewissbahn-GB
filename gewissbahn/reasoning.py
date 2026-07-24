@@ -30,6 +30,7 @@ class ItinerarySummary:
     duration_min: int
     n_transfers: int
     confidence: float
+    leg_details: list[str] = field(default_factory=list)
     transfer_details: list[str] = field(default_factory=list)
     live_note: str | None = None
 
@@ -39,6 +40,7 @@ class ItinerarySummary:
             f"({self.duration_min} min), {self.n_transfers} transfer(s), "
             f"confidence {self.confidence:.0%}"
         ]
+        lines += [f"  - leg: {d}" for d in self.leg_details]
         lines += [f"  - {d}" for d in self.transfer_details]
         if self.live_note:
             lines.append(f"  - live data: {self.live_note}")
