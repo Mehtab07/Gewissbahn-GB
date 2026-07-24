@@ -167,6 +167,34 @@ def get_mapping(gtfs_con: duckdb.DuckDBPyConnection, force: bool = False) -> pd.
     return mapping
 
 
+def primary_eva_for_stop(mapping: pd.DataFrame, gtfs_stop_id: float) -> str | None:
+    """Several piebro evas can map to the same physical GTFS station (e.g. a station's
+    long-distance eva and its separate S-Bahn-only eva both resolve to one GTFS entity).
+    Picks the most likely "main" eva: prefer a name with no parenthetical/suffix qualifier
+    (avoid "Berlin Hbf (S-Bahn)" in favor of plain "Berlin Hbf"), then the shortest name."""
+    candidates = mapping[mapping["gtfs_stop_id"] == gtfs_stop_id]
+    if candidates.empty:
+        return None
+
+    def rank(name: str) -> tuple[int, int]:
+        has_qualifier = 1 if "(" in name else 0
+        return (has_qualifier, len(name))
+
+    candidates = candidates.assign(_rank=candidates["station_name"].apply(rank))
+    return candidates.sort_values("_rank").iloc[0]["eva"]
+
+
+def eva_for_platform(gtfs_con: duckdb.DuckDBPyConnection, mapping: pd.DataFrame, platform_stop_id: int) -> str | None:
+    """A leg's board/alight stop_id is a specific platform; resolve it up to its station,
+    then to the most likely eva for that station (see primary_eva_for_stop)."""
+    row = gtfs_con.execute(
+        "SELECT coalesce(parent_station, stop_id) AS station_id FROM stops WHERE stop_id = ?", [platform_stop_id]
+    ).fetchone()
+    if row is None:
+        return None
+    return primary_eva_for_stop(mapping, float(row[0]))
+
+
 def platform_stop_ids(gtfs_con: duckdb.DuckDBPyConnection, station_stop_id: str) -> list[str]:
     df = gtfs_con.execute(
         "SELECT stop_id FROM stops WHERE parent_station = ?", [station_stop_id]
